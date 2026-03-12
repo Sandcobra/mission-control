@@ -4,7 +4,7 @@ import './globals.css'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { cn } from '@/lib/utils'
 import { LiveEventsProvider } from '@/lib/liveEvents'
 import LiveDot from '@/components/ui/LiveDot'
@@ -114,6 +114,16 @@ export default function RootLayout({
   )
   const pathname = usePathname()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [dateStr, setDateStr] = useState('')
+  useEffect(() => {
+    setDateStr(
+      new Date().toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+      })
+    )
+  }, [])
 
   const currentPage =
     NAV_ITEMS.find((item) =>
@@ -175,13 +185,11 @@ export default function RootLayout({
 
                 <div className="ml-auto flex items-center gap-3">
                   <LiveDot color="green" size="sm" label="LIVE" />
-                  <span className="text-[10px] text-gray-700 font-mono hidden sm:block" suppressHydrationWarning>
-                    {new Date().toLocaleDateString('en-US', {
-                      weekday: 'short',
-                      month: 'short',
-                      day: 'numeric',
-                    })}
-                  </span>
+                  {dateStr && (
+                    <span className="text-[10px] text-gray-700 font-mono hidden sm:block">
+                      {dateStr}
+                    </span>
+                  )}
                 </div>
               </header>
 
