@@ -195,8 +195,8 @@ export interface PaginatedResponse<T> {
 export async function fetchAgents(status?: string): Promise<Agent[]> {
   const params: Record<string, string> = {}
   if (status && status !== 'all') params.status = status
-  const res = await apiClient.get<Agent[]>('/api/agents', { params })
-  return res.data
+  const res = await apiClient.get<{ items: any[]; total: number }>('/api/agents', { params })
+  return res.data.items.map((a: any) => ({ ...a, agent_id: String(a.id) }))
 }
 
 export async function fetchAgent(id: string): Promise<Agent> {

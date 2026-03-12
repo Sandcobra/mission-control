@@ -173,7 +173,7 @@ export default function RootLayout({
 
                 <div className="ml-auto flex items-center gap-3">
                   <LiveDot color="green" size="sm" label="LIVE" />
-                  <span className="text-[10px] text-gray-700 font-mono hidden sm:block">
+                  <span className="text-[10px] text-gray-700 font-mono hidden sm:block" suppressHydrationWarning>
                     {new Date().toLocaleDateString('en-US', {
                       weekday: 'short',
                       month: 'short',
