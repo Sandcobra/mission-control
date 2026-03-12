@@ -87,8 +87,8 @@ export function statusBg(status: string): string {
   }
 }
 
-export function formatCost(usd: number): string {
-  if (usd === 0) return '$0.00'
+export function formatCost(usd: number | null | undefined): string {
+  if (usd == null || usd === 0) return '$0.00'
   if (usd < 0.0001) return `$${usd.toExponential(2)}`
   if (usd < 0.01) return `$${usd.toFixed(4)}`
   if (usd < 1) return `$${usd.toFixed(3)}`
@@ -96,7 +96,8 @@ export function formatCost(usd: number): string {
   return `$${usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-export function formatTokens(n: number): string {
+export function formatTokens(n: number | null | undefined): string {
+  if (n == null) return '0'
   if (n < 1000) return n.toString()
   if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`
   return `${(n / 1_000_000).toFixed(2)}M`
