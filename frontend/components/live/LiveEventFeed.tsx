@@ -1,22 +1,10 @@
 'use client'
 
-import { useState, useCallback } from 'react'
-import { useWebSocket } from '@/lib/websocket'
-import { cn, timeAgo } from '@/lib/utils'
+import { useLiveEvents, type LiveEvent } from '@/lib/liveEvents'
+import { cn } from '@/lib/utils'
 import LiveDot from '@/components/ui/LiveDot'
 
 const MAX_EVENTS = 100
-
-interface LiveEvent {
-  id: string
-  timestamp: string
-  channel: 'task' | 'agent'
-  event_type: string
-  agent_key?: string
-  task_key?: string
-  message: string
-  raw: unknown
-}
 
 function rowColor(eventType: string): string {
   const t = eventType.toLowerCase()
@@ -39,55 +27,8 @@ function eventTypeColor(eventType: string): string {
   return 'text-gray-500'
 }
 
-let eventCounter = 0
-
-function makeId(): string {
-  return `evt_${Date.now()}_${eventCounter++}`
-}
-
-interface RawEventPayload {
-  event_type?: string
-  type?: string
-  agent_key?: string
-  task_key?: string
-  message?: string
-  [key: string]: unknown
-}
-
 export default function LiveEventFeed() {
-  const [events, setEvents] = useState<LiveEvent[]>([])
-
-  const handleTaskMessage = useCallback((data: unknown) => {
-    const payload = data as RawEventPayload
-    const event: LiveEvent = {
-      id: makeId(),
-      timestamp: new Date().toISOString(),
-      channel: 'task',
-      event_type: payload.event_type ?? payload.type ?? 'update',
-      agent_key: payload.agent_key,
-      task_key: payload.task_key,
-      message: payload.message ?? JSON.stringify(data).slice(0, 120),
-      raw: data,
-    }
-    setEvents((prev) => [event, ...prev].slice(0, MAX_EVENTS))
-  }, [])
-
-  const handleAgentMessage = useCallback((data: unknown) => {
-    const payload = data as RawEventPayload
-    const event: LiveEvent = {
-      id: makeId(),
-      timestamp: new Date().toISOString(),
-      channel: 'agent',
-      event_type: payload.event_type ?? payload.type ?? 'heartbeat',
-      agent_key: payload.agent_key,
-      message: payload.message ?? JSON.stringify(data).slice(0, 120),
-      raw: data,
-    }
-    setEvents((prev) => [event, ...prev].slice(0, MAX_EVENTS))
-  }, [])
-
-  useWebSocket('task_updates', handleTaskMessage)
-  useWebSocket('agent_updates', handleAgentMessage)
+  const { events } = useLiveEvents()
 
   return (
     <div className="flex flex-col h-full">

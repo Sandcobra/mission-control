@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
+import { LiveEventsProvider } from '@/lib/liveEvents'
 import LiveDot from '@/components/ui/LiveDot'
 import {
   LayoutDashboard,
@@ -132,6 +133,7 @@ export default function RootLayout({
       </head>
       <body className="bg-gray-950 text-gray-200 min-h-screen">
         <QueryClientProvider client={queryClient}>
+        <LiveEventsProvider>
           <div className="flex h-screen overflow-hidden">
             {/* Desktop sidebar */}
             <div className="hidden lg:flex lg:flex-col lg:w-52 shrink-0">
@@ -189,6 +191,7 @@ export default function RootLayout({
               </main>
             </div>
           </div>
+        </LiveEventsProvider>
         </QueryClientProvider>
       </body>
     </html>

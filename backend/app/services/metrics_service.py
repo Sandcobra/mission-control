@@ -3,9 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import case, cast, func, select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.models import Agent, AgentRun, Task, TaskEvent
 from app.schemas.metrics import CostMetrics, FailureMetrics, OverviewMetrics
@@ -14,23 +13,30 @@ from app.schemas.metrics import CostMetrics, FailureMetrics, OverviewMetrics
 async def get_overview_metrics(db: AsyncSession) -> OverviewMetrics:
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
-    # Agents online (non-offline)
-    agents_online_result = await db.execute(
-        select(func.count(Agent.id)).where(Agent.status != "offline")
+    # Agent counts by status (one query)
+    agent_counts_result = await db.execute(
+        select(Agent.status, func.count(Agent.id)).group_by(Agent.status)
     )
-    total_agents_online: int = agents_online_result.scalar_one() or 0
+    agent_counts: dict[str, int] = {row[0]: row[1] for row in agent_counts_result}
+    agents_total = sum(agent_counts.values())
+    agents_idle = agent_counts.get("idle", 0)
+    agents_running_count = agent_counts.get("running", 0)
+    agents_blocked_count = agent_counts.get("blocked", 0)
+    agents_offline = agent_counts.get("offline", 0)
+    agents_error = agent_counts.get("error", 0)
+    agents_online = agents_total - agents_offline
 
-    # Running tasks
-    running_result = await db.execute(
-        select(func.count(Task.id)).where(Task.status == "running")
+    # Task counts by status (one query)
+    task_counts_result = await db.execute(
+        select(Task.status, func.count(Task.id)).group_by(Task.status)
     )
-    tasks_running: int = running_result.scalar_one() or 0
-
-    # Blocked tasks
-    blocked_result = await db.execute(
-        select(func.count(Task.id)).where(Task.status == "blocked")
-    )
-    tasks_blocked: int = blocked_result.scalar_one() or 0
+    task_counts: dict[str, int] = {row[0]: row[1] for row in task_counts_result}
+    tasks_total = sum(task_counts.values())
+    tasks_queued = task_counts.get("queued", 0)
+    tasks_running = task_counts.get("running", 0)
+    tasks_blocked = task_counts.get("blocked", 0)
+    tasks_failed_total = task_counts.get("failed", 0)
+    tasks_completed_total = task_counts.get("completed", 0)
 
     # Failed today
     failed_today_result = await db.execute(
@@ -39,7 +45,7 @@ async def get_overview_metrics(db: AsyncSession) -> OverviewMetrics:
             Task.completed_at >= today_start,
         )
     )
-    tasks_failed_today: int = failed_today_result.scalar_one() or 0
+    tasks_failed_24h: int = failed_today_result.scalar_one() or 0
 
     # Completed today
     completed_today_result = await db.execute(
@@ -48,101 +54,82 @@ async def get_overview_metrics(db: AsyncSession) -> OverviewMetrics:
             Task.completed_at >= today_start,
         )
     )
-    tasks_completed_today: int = completed_today_result.scalar_one() or 0
+    tasks_completed_24h: int = completed_today_result.scalar_one() or 0
 
     # Spend today
-    spend_result = await db.execute(
+    spend_today_result = await db.execute(
         select(func.coalesce(func.sum(AgentRun.estimated_cost_usd), 0.0)).where(
             AgentRun.started_at >= today_start
         )
     )
-    spend_today_usd: float = float(spend_result.scalar_one() or 0.0)
+    spend_today_usd: float = float(spend_today_result.scalar_one() or 0.0)
 
-    # Average task duration for completed tasks (in minutes)
-    avg_duration_result = await db.execute(
-        select(
-            func.avg(
-                func.extract(
-                    "epoch",
-                    Task.completed_at - Task.started_at,
-                )
-            )
-        ).where(
-            Task.status == "completed",
-            Task.started_at.isnot(None),
-            Task.completed_at.isnot(None),
-        )
+    # Spend total
+    spend_total_result = await db.execute(
+        select(func.coalesce(func.sum(AgentRun.estimated_cost_usd), 0.0))
     )
-    avg_seconds = avg_duration_result.scalar_one()
-    avg_task_duration_minutes: float | None = (
-        float(avg_seconds) / 60.0 if avg_seconds is not None else None
-    )
+    spend_total_usd: float = float(spend_total_result.scalar_one() or 0.0)
 
     return OverviewMetrics(
-        total_agents_online=total_agents_online,
+        agents_total=agents_total,
+        agents_online=agents_online,
+        agents_idle=agents_idle,
+        agents_running=agents_running_count,
+        agents_blocked=agents_blocked_count,
+        agents_offline=agents_offline,
+        agents_error=agents_error,
+        tasks_total=tasks_total,
+        tasks_queued=tasks_queued,
         tasks_running=tasks_running,
         tasks_blocked=tasks_blocked,
-        tasks_failed_today=tasks_failed_today,
-        tasks_completed_today=tasks_completed_today,
+        tasks_failed_24h=tasks_failed_24h,
+        tasks_completed_24h=tasks_completed_24h,
+        tasks_failed_total=tasks_failed_total,
+        tasks_completed_total=tasks_completed_total,
         spend_today_usd=spend_today_usd,
-        avg_task_duration_minutes=avg_task_duration_minutes,
+        spend_total_usd=spend_total_usd,
     )
 
 
 async def get_cost_metrics(db: AsyncSession) -> CostMetrics:
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+
     # Cost by agent
     by_agent_result = await db.execute(
         select(
             Agent.id.label("agent_id"),
+            Agent.agent_key.label("agent_key"),
             Agent.name.label("agent_name"),
-            func.coalesce(func.sum(AgentRun.estimated_cost_usd), 0.0).label("total_usd"),
-            func.coalesce(func.sum(AgentRun.token_input), 0).label("total_token_input"),
-            func.coalesce(func.sum(AgentRun.token_output), 0).label("total_token_output"),
+            func.coalesce(func.sum(AgentRun.estimated_cost_usd), 0.0).label("cost_usd"),
+            func.coalesce(func.sum(AgentRun.token_input), 0).label("input_tokens"),
+            func.coalesce(func.sum(AgentRun.token_output), 0).label("output_tokens"),
             func.count(AgentRun.id).label("run_count"),
         )
         .outerjoin(AgentRun, AgentRun.agent_id == Agent.id)
-        .group_by(Agent.id, Agent.name)
+        .group_by(Agent.id, Agent.agent_key, Agent.name)
         .order_by(func.coalesce(func.sum(AgentRun.estimated_cost_usd), 0.0).desc())
     )
     by_agent: list[dict[str, Any]] = [
         {
             "agent_id": str(row.agent_id),
+            "agent_key": row.agent_key,
             "agent_name": row.agent_name,
-            "total_usd": float(row.total_usd),
-            "total_token_input": int(row.total_token_input),
-            "total_token_output": int(row.total_token_output),
+            "cost_usd": float(row.cost_usd),
+            "input_tokens": int(row.input_tokens),
+            "output_tokens": int(row.output_tokens),
             "run_count": int(row.run_count),
         }
         for row in by_agent_result
-    ]
-
-    # Cost by task
-    by_task_result = await db.execute(
-        select(
-            Task.id.label("task_id"),
-            Task.title.label("task_title"),
-            func.coalesce(func.sum(AgentRun.estimated_cost_usd), 0.0).label("total_usd"),
-        )
-        .outerjoin(AgentRun, AgentRun.task_id == Task.id)
-        .group_by(Task.id, Task.title)
-        .order_by(func.coalesce(func.sum(AgentRun.estimated_cost_usd), 0.0).desc())
-        .limit(50)
-    )
-    by_task: list[dict[str, Any]] = [
-        {
-            "task_id": str(row.task_id),
-            "task_title": row.task_title,
-            "total_usd": float(row.total_usd),
-        }
-        for row in by_task_result
     ]
 
     # Cost by day (last 30 days)
     by_day_result = await db.execute(
         select(
             func.date_trunc("day", AgentRun.started_at).label("day"),
-            func.coalesce(func.sum(AgentRun.estimated_cost_usd), 0.0).label("total_usd"),
-            func.count(AgentRun.id).label("run_count"),
+            func.coalesce(func.sum(AgentRun.estimated_cost_usd), 0.0).label("cost_usd"),
+            func.coalesce(func.sum(AgentRun.token_input), 0).label("input_tokens"),
+            func.coalesce(func.sum(AgentRun.token_output), 0).label("output_tokens"),
+            func.count(AgentRun.id).label("task_count"),
         )
         .where(AgentRun.started_at >= datetime.utcnow() - timedelta(days=30))
         .group_by(text("day"))
@@ -150,9 +137,11 @@ async def get_cost_metrics(db: AsyncSession) -> CostMetrics:
     )
     by_day: list[dict[str, Any]] = [
         {
-            "day": row.day.isoformat() if row.day else None,
-            "total_usd": float(row.total_usd),
-            "run_count": int(row.run_count),
+            "date": row.day.date().isoformat() if row.day else None,
+            "cost_usd": float(row.cost_usd),
+            "input_tokens": int(row.input_tokens),
+            "output_tokens": int(row.output_tokens),
+            "task_count": int(row.task_count),
         }
         for row in by_day_result
     ]
@@ -163,11 +152,19 @@ async def get_cost_metrics(db: AsyncSession) -> CostMetrics:
     )
     total_usd: float = float(total_result.scalar_one() or 0.0)
 
+    # Today
+    today_result = await db.execute(
+        select(func.coalesce(func.sum(AgentRun.estimated_cost_usd), 0.0)).where(
+            AgentRun.started_at >= today_start
+        )
+    )
+    today_usd: float = float(today_result.scalar_one() or 0.0)
+
     return CostMetrics(
-        by_agent=by_agent,
-        by_task=by_task,
-        by_day=by_day,
         total_usd=total_usd,
+        today_usd=today_usd,
+        by_day=by_day,
+        by_agent=by_agent,
     )
 
 
@@ -209,7 +206,7 @@ async def get_failure_metrics(db: AsyncSession) -> FailureMetrics:
         for row in recent_failures_result
     ]
 
-    # Top error message patterns (group by first 120 chars of error_message)
+    # Top error message patterns
     top_errors_result = await db.execute(
         select(
             func.substring(Task.error_message, 1, 120).label("error_snippet"),
